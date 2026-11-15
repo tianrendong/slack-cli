@@ -2,7 +2,16 @@
 
 Local Slack CLI for searching and reading Slack.
 
-## Setup
+## Install
+
+```bash
+brew install tianrendong/tap/slack-cli
+```
+
+Optional OAuth app credentials go in `~/.config/slack-cli/.env`
+(see `.env.example`).
+
+## Setup from source
 
 ```bash
 bun install
@@ -14,7 +23,8 @@ Configure credentials in `.env`. Never commit `.env`.
 
 ## Environment
 
-The CLI only reads its own `.env` (`~/tools/slack-cli/.env`). Bun's automatic
+The CLI only reads its own `.env` files: the one in its source checkout and
+`~/.config/slack-cli/.env`. Bun's automatic
 loading of the current working directory's `.env` is disabled via
 `bun --no-env-file` in the shebang and package scripts, so running `slack` from
 another repo won't pick up that repo's Slack credentials.

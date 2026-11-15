@@ -1,8 +1,20 @@
 import { readFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { join } from "node:path";
 
+/**
+ * Loads `.env` files without overriding existing env vars. Earlier files win:
+ * 1. `.env` next to the source checkout (dev installs)
+ * 2. `$XDG_CONFIG_HOME/slack-cli/.env` (default `~/.config/slack-cli/.env`)
+ */
 export async function loadLocalEnv(): Promise<void> {
-  const envPath = join(import.meta.dirname, "..", ".env");
+  const configBase = process.env["XDG_CONFIG_HOME"] ?? join(homedir(), ".config");
+  for (const envPath of [join(import.meta.dirname, "..", ".env"), join(configBase, "slack-cli", ".env")]) {
+    await loadEnvFile(envPath);
+  }
+}
+
+async function loadEnvFile(envPath: string): Promise<void> {
   try {
     const raw = await readFile(envPath, "utf8");
     for (const line of raw.split(/\r?\n/)) {

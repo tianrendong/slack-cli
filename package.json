@@ -1,12 +1,14 @@
 {
   "name": "slack-cli",
+  "version": "0.1.0",
   "module": "src/index.ts",
   "type": "module",
   "private": true,
   "scripts": {
     "start": "bun --no-env-file run src/index.ts",
     "slack": "bun --no-env-file run src/index.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build": "bun build src/index.ts --target bun --outfile dist/slack.js"
   },
   "bin": {
     "slack": "./src/index.ts",
