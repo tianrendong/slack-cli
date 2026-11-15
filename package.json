@@ -1,0 +1,22 @@
+{
+  "name": "slack-cli",
+  "module": "src/index.ts",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "bun --no-env-file run src/index.ts",
+    "slack": "bun --no-env-file run src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "bin": {
+    "slack": "./src/index.ts",
+    "slack-cli": "./src/index.ts"
+  },
+  "dependencies": {
+    "@slack/web-api": "^7.15.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.9.3"
+  }
+}

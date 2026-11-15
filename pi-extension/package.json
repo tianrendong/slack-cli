@@ -1,0 +1,15 @@
+{
+  "name": "slack-cli-pi-extension",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Pi extension exposing the local slack CLI as first-class Pi tools.",
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  }
+}
