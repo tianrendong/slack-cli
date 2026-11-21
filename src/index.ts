@@ -10,10 +10,11 @@ import {
   runOAuthLogin,
   storeUserToken,
 } from "./auth";
-import { formatMessages, parseDateOrTimestamp, printJson, printMessages } from "./format";
+import { formatBytes, formatMessages, parseDateOrTimestamp, printJson, printMessages } from "./format";
 import { loadLocalEnv } from "./env";
 import {
   createClient,
+  downloadFile,
   getPermalink,
   listChannels,
   readChannelHistory,
@@ -56,6 +57,9 @@ async function main(): Promise<void> {
       return;
     case "permalink":
       await runPermalinkCommand([args.subcommand, ...args.positionals].filter(Boolean) as string[]);
+      return;
+    case "download":
+      await runDownloadCommand([args.subcommand, ...args.positionals].filter(Boolean) as string[], args.flags);
       return;
     default:
       throw new Error(`Unknown command: ${args.command}`);
@@ -279,6 +283,27 @@ async function runPermalinkCommand(positionals: string[]): Promise<void> {
   console.log(await getPermalink(client, channel, messageTs));
 }
 
+async function runDownloadCommand(positionals: string[], flags: Record<string, string | boolean>): Promise<void> {
+  const fileInput = positionals[0];
+  if (!fileInput) {
+    throw new Error("Usage: slack download <file-id|slack-file-url> [--out <path>] [--json]");
+  }
+
+  const outPath = readStringFlag(flags, "out") ?? readStringFlag(flags, "o");
+  const auth = await getAuthForApi();
+  const client = createClient(auth.userToken);
+  const result = await downloadFile(client, auth.userToken, fileInput, outPath);
+
+  if (readBoolFlag(flags, "json")) {
+    printJson(result);
+    return;
+  }
+
+  const meta = [result.mimetype, formatBytes(result.size)].filter(Boolean).join(", ");
+  console.log(`Saved: ${result.path}`);
+  console.log(`File: ${result.id ? `${result.id} ` : ""}${result.name}${meta ? ` (${meta})` : ""}`);
+}
+
 function printHelp(): void {
   console.log(`slack-cli
 
@@ -294,12 +319,14 @@ Usage:
   slack channels [query] [--limit 50] [--json]
   slack permalink <thread-url>
   slack permalink <channel-id|#channel-name> <message_ts>
+  slack download <file-id|slack-file-url> [--out <path>] [--json]
 
 Examples:
   slack search "project gizmo after:2026-04-01" --limit 10
   slack read '#team-channel' --limit 20
   slack thread "https://workspace.slack.com/archives/C123/p1713890000123456"
   slack thread C123456 1713890000.123456
+  slack download F0123ABC --out ./image.jpg
 
 Token file:
   ${authFilePath()}
@@ -344,6 +371,9 @@ function printCommandHelp(command: string): void {
       return;
     case "permalink":
       console.log("Usage: slack permalink <thread-url> OR slack permalink <channel-id|#channel-name> <message_ts>");
+      return;
+    case "download":
+      console.log("Usage: slack download <file-id|slack-file-url> [--out <path>] [--json]");
       return;
     default:
       printHelp();

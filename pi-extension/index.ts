@@ -180,6 +180,25 @@ function toolResponse(result: SlackCommandResult) {
 	};
 }
 
+const INLINE_IMAGE_MIME_TYPES = new Set([
+	"image/jpeg",
+	"image/png",
+	"image/gif",
+	"image/webp",
+]);
+const MAX_INLINE_IMAGE_BYTES = 4 * 1024 * 1024;
+
+interface DownloadedFileResult {
+	ok: boolean;
+	id?: string;
+	name: string;
+	mimetype?: string;
+	filetype?: string;
+	size: number;
+	path: string;
+	url: string;
+}
+
 const FORMAT_PARAM = Type.Optional(Type.Union([
 	Type.Literal("text"),
 	Type.Literal("json"),
@@ -192,7 +211,7 @@ export default function slackCliExtension(pi: ExtensionAPI) {
 		description: "Read a Slack thread by URL, or by channel + threadTs.",
 		promptSnippet: "Read a Slack thread",
 		promptGuidelines: [
-			"Use slack_thread (not web fetch) for Slack URLs; slack_search to find Slack context; slack_read for surrounding channel history.",
+			"Use slack_thread (not web fetch) for Slack URLs; slack_search to find Slack context; slack_read for surrounding channel history; slack_download to download attached files or images.",
 		],
 		outputSchema: SLACK_OUTPUT_SCHEMA,
 		parameters: Type.Object({
@@ -353,6 +372,51 @@ export default function slackCliExtension(pi: ExtensionAPI) {
 				throw new Error("Provide either url, or both channel and messageTs.");
 			}
 			return toolResponse(await runSlack(args, signal));
+		},
+	});
+
+	pi.registerTool({
+		name: "slack_download",
+		label: "Slack Download",
+		description: "Download a file or image attached to a Slack message by file ID (e.g. F0123ABC) or Slack file URL. Saves to disk and attaches images directly so you can inspect them.",
+		promptSnippet: "Download Slack files and images",
+		outputSchema: SLACK_OUTPUT_SCHEMA,
+		parameters: Type.Object({
+			file: Type.String({ description: "Slack file ID (e.g. F0123ABC) or files.slack.com URL" }),
+			out: Type.Optional(Type.String({ description: "Destination file or directory path (default: temp dir)" })),
+		}),
+		async execute(_toolCallId, params, signal) {
+			const args = ["download", params.file];
+			pushOptionalFlag(args, "out", params.out);
+			const result = await runSlack(args, signal, "json");
+			const downloaded = result.parsedJson as DownloadedFileResult | undefined;
+			if (!downloaded || typeof downloaded !== "object" || typeof downloaded.path !== "string") {
+				return toolResponse(result);
+			}
+
+			const summaryLines = [
+				`Saved: ${downloaded.path}`,
+				`File: ${downloaded.id ? `${downloaded.id} ` : ""}${downloaded.name} (${downloaded.mimetype ?? "unknown"}, ${downloaded.size} bytes)`,
+			];
+			const content: Array<
+				| { type: "text"; text: string }
+				| { type: "image"; data: string; mimeType: string }
+			> = [{ type: "text", text: summaryLines.join("\n") }];
+
+			if (downloaded.mimetype && INLINE_IMAGE_MIME_TYPES.has(downloaded.mimetype)) {
+				if (downloaded.size <= MAX_INLINE_IMAGE_BYTES) {
+					const data = readFileSync(downloaded.path).toString("base64");
+					content.push({ type: "image", data, mimeType: downloaded.mimetype });
+				} else {
+					content[0]!.text += `\nNote: image exceeds 4 MB; use the read tool on ${downloaded.path} to view a resized copy.`;
+				}
+			}
+
+			return {
+				content,
+				structuredContent: downloaded as unknown as JsonValue,
+				details: result,
+			};
 		},
 	});
 

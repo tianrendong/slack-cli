@@ -1,5 +1,8 @@
 import { WebClient } from "@slack/web-api";
-import type { PrintableMessage } from "./format";
+import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import type { PrintableFile, PrintableMessage } from "./format";
 
 export type SearchMode = "auto" | "rts" | "legacy";
 
@@ -41,6 +44,17 @@ interface RealtimeSearchResponse {
   };
 }
 
+interface SlackFile {
+  id?: string;
+  name?: string;
+  title?: string;
+  mimetype?: string;
+  filetype?: string;
+  size?: number;
+  url_private?: string;
+  url_private_download?: string;
+}
+
 interface LegacySearchResponse {
   ok?: boolean;
   error?: string;
@@ -55,6 +69,7 @@ interface LegacySearchResponse {
       ts?: string;
       user?: string;
       username?: string;
+      files?: SlackFile[];
     }>;
   };
 }
@@ -68,6 +83,21 @@ interface SlackMessage {
   ts?: string;
   thread_ts?: string;
   reply_count?: number;
+  files?: SlackFile[];
+}
+
+function mapSlackFiles(files?: SlackFile[]): PrintableFile[] | undefined {
+  if (!files || files.length === 0) return undefined;
+  return files.map((file) => ({
+    id: file.id,
+    name: file.name,
+    title: file.title,
+    mimetype: file.mimetype,
+    filetype: file.filetype,
+    size: file.size,
+    urlPrivateDownload: file.url_private_download,
+    urlPrivate: file.url_private,
+  }));
 }
 
 interface ConversationListResponse {
@@ -168,6 +198,7 @@ async function searchLegacy(client: WebClient, options: SearchOptions): Promise<
       userName: message.username,
       text: message.text,
       permalink: message.permalink,
+      files: mapSlackFiles(message.files),
     })),
   };
 }
@@ -206,6 +237,7 @@ export async function readChannelHistory(
     text: message.text,
     threadTs: message.thread_ts,
     replyCount: message.reply_count,
+    files: mapSlackFiles(message.files),
   }));
 
   return { channelId, messages, raw: response };
@@ -265,6 +297,7 @@ export async function readThread(
     text: message.text,
     threadTs: message.thread_ts,
     replyCount: message.reply_count,
+    files: mapSlackFiles(message.files),
   }));
   const replyCount = parent?.reply_count;
   const totalMessages = replyCount === undefined ? undefined : replyCount + 1;
@@ -364,4 +397,179 @@ function channelType(channel: {
   if (channel.is_group) return "private_channel";
   if (channel.is_channel) return "public_channel";
   return "unknown";
+}
+
+export interface DownloadedFile {
+  ok: true;
+  id?: string;
+  name: string;
+  mimetype?: string;
+  filetype?: string;
+  size: number;
+  path: string;
+  url: string;
+}
+
+function isSlackHost(hostname: string): boolean {
+  const lower = hostname.toLowerCase();
+  return lower === "slack.com" || lower.endsWith(".slack.com");
+}
+
+function sanitizeFilename(name: string): string {
+  const base = path.basename(name).replace(/[\0/\\:*?"<>|]/g, "_").trim();
+  return base || "slack-file";
+}
+
+function extractFileIdFromUrl(url: URL): string | undefined {
+  // e.g. https://files.slack.com/files-pri/T01234567-F0123ABC/download/img.jpg
+  const priMatch = url.pathname.match(/\/[TEW][A-Z0-9]+-(F[A-Z0-9]+)(?:\/|$)/i);
+  if (priMatch?.[1]) return priMatch[1].toUpperCase();
+  // e.g. https://workspace.slack.com/files/U01234567/F0123ABC/img.jpg
+  const filesMatch = url.pathname.match(/\/files\/[^/]+\/(F[A-Z0-9]+)(?:\/|$)/i);
+  if (filesMatch?.[1]) return filesMatch[1].toUpperCase();
+  return undefined;
+}
+
+function resolveDownloadPath(outPath: string | undefined, filename: string, fileId?: string): string {
+  const safeName = sanitizeFilename(filename);
+  if (outPath) {
+    const resolved = path.resolve(outPath);
+    if (outPath.endsWith(path.sep) || outPath.endsWith("/") || (existsSync(resolved) && statSync(resolved).isDirectory())) {
+      mkdirSync(resolved, { recursive: true });
+      return path.join(resolved, safeName);
+    }
+    mkdirSync(path.dirname(resolved), { recursive: true });
+    return resolved;
+  }
+
+  const dir = path.join(tmpdir(), "slack-files");
+  mkdirSync(dir, { recursive: true });
+  const prefixed = fileId && !safeName.startsWith(`${fileId}-`) ? `${fileId}-${safeName}` : safeName;
+  return path.join(dir, prefixed);
+}
+
+export async function downloadFile(
+  client: WebClient,
+  token: string,
+  fileInput: string,
+  outPath?: string,
+): Promise<DownloadedFile> {
+  const trimmed = fileInput.trim();
+  if (!trimmed) {
+    throw new Error("Provide a Slack file ID (e.g. F0123ABC) or Slack file URL.");
+  }
+
+  let fileId: string | undefined;
+  let downloadUrl: string | undefined;
+  let name: string | undefined;
+  let mimetype: string | undefined;
+  let filetype: string | undefined;
+
+  if (/^F[A-Z0-9]+$/i.test(trimmed)) {
+    fileId = trimmed.toUpperCase();
+  } else {
+    let parsed: URL;
+    try {
+      parsed = new URL(trimmed);
+    } catch {
+      throw new Error(`Invalid Slack file ID or URL: ${trimmed}`);
+    }
+    if (!isSlackHost(parsed.hostname)) {
+      throw new Error(`Refusing to send Slack credentials to non-Slack host: ${parsed.hostname}`);
+    }
+    const extractedId = extractFileIdFromUrl(parsed);
+    if (parsed.hostname.toLowerCase() === "files.slack.com") {
+      downloadUrl = parsed.toString();
+      fileId = extractedId;
+      const urlSegment = parsed.pathname.split("/").filter(Boolean).pop();
+      if (urlSegment) name = decodeURIComponent(urlSegment);
+    } else if (extractedId) {
+      fileId = extractedId;
+    } else {
+      throw new Error(`Could not extract a Slack file ID or downloadable URL from: ${trimmed}`);
+    }
+  }
+
+  if (!downloadUrl && fileId) {
+    const response = await client.files.info({ file: fileId });
+    const file = response.file as SlackFile | undefined;
+    if (!response.ok || !file) {
+      throw new Error(`files.info failed for ${fileId}`);
+    }
+    downloadUrl = file.url_private_download ?? file.url_private;
+    if (!downloadUrl) {
+      throw new Error(`Slack file ${fileId} has no downloadable private URL.`);
+    }
+    name = file.name ?? file.title ?? fileId;
+    mimetype = file.mimetype;
+    filetype = file.filetype;
+  }
+
+  if (!downloadUrl) {
+    throw new Error(`Could not resolve download URL for: ${trimmed}`);
+  }
+
+  let currentUrl = downloadUrl;
+  let res: Response | undefined;
+  for (let hop = 0; hop < 5; hop++) {
+    const target = new URL(currentUrl);
+    const headers: Record<string, string> = {};
+    if (isSlackHost(target.hostname)) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+
+    res = await fetch(currentUrl, { headers, redirect: "manual" });
+    if (res.status >= 300 && res.status < 400) {
+      const location = res.headers.get("location");
+      if (!location) break;
+      const nextUrl = new URL(location, currentUrl);
+      if (
+        isSlackHost(nextUrl.hostname) &&
+        (nextUrl.searchParams.has("redir") || nextUrl.pathname === "/signin" || nextUrl.pathname === "/ssb/redirect")
+      ) {
+        throw new Error(
+          "Slack redirected to a login page. Check that your token is valid and has the files:read scope.",
+        );
+      }
+      currentUrl = nextUrl.toString();
+      continue;
+    }
+    break;
+  }
+
+  if (!res || !res.ok) {
+    throw new Error(`Failed to download Slack file (HTTP ${res?.status ?? "unknown"} ${res?.statusText ?? ""})`.trim());
+  }
+
+  const contentType = res.headers.get("content-type")?.split(";")[0]?.trim();
+  const isExpectedHtml =
+    mimetype === "text/html" ||
+    filetype === "html" ||
+    (name !== undefined && /\.(html?|xhtml)$/i.test(name));
+
+  const bytes = new Uint8Array(await res.arrayBuffer());
+  if (contentType === "text/html" && !isExpectedHtml) {
+    const preview = new TextDecoder().decode(bytes.subarray(0, 512)).toLowerCase();
+    if (preview.includes("slack") && (preview.includes("sign in") || preview.includes("login") || preview.includes("redir"))) {
+      throw new Error(
+        "Slack returned an HTML login page instead of the file. Check that your token has the files:read scope.",
+      );
+    }
+  }
+
+  const resolvedMimeType = mimetype || contentType || undefined;
+  const resolvedName = name || fileId || "slack-file";
+  const destPath = resolveDownloadPath(outPath, resolvedName, fileId);
+  writeFileSync(destPath, bytes);
+
+  return {
+    ok: true,
+    id: fileId,
+    name: resolvedName,
+    mimetype: resolvedMimeType,
+    filetype,
+    size: bytes.byteLength,
+    path: destPath,
+    url: downloadUrl,
+  };
 }

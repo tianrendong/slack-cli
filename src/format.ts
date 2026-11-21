@@ -53,6 +53,17 @@ function setCachedUserName(cache: UserCache, userId: string, name: string): bool
   return true;
 }
 
+export interface PrintableFile {
+  id?: string;
+  name?: string;
+  title?: string;
+  mimetype?: string;
+  filetype?: string;
+  size?: number;
+  urlPrivateDownload?: string;
+  urlPrivate?: string;
+}
+
 export interface PrintableMessage {
   channelId?: string;
   channelName?: string;
@@ -63,6 +74,7 @@ export interface PrintableMessage {
   permalink?: string;
   threadTs?: string;
   replyCount?: number;
+  files?: PrintableFile[];
 }
 
 export function printJson(value: unknown): void {
@@ -106,6 +118,18 @@ export async function formatMessages(client: WebClient, messages: PrintableMessa
     const lines = [`${channel} ${ts} ${user}`, indent(text || "(no text)")];
     if (message.ts) lines.push(`  ts: ${message.ts}`);
     if (message.replyCount && message.replyCount > 0) lines.push(`  replies: ${message.replyCount}`);
+    if (message.files && message.files.length > 0) {
+      lines.push("  files:");
+      for (const file of message.files) {
+        const label = file.name || file.title || "(unnamed)";
+        const meta = [
+          file.mimetype || file.filetype,
+          file.size !== undefined ? formatBytes(file.size) : undefined,
+        ].filter(Boolean).join(", ");
+        const idPrefix = file.id ? `${file.id}  ` : "";
+        lines.push(`    - ${idPrefix}${label}${meta ? ` (${meta})` : ""}`);
+      }
+    }
     if (message.permalink) lines.push(`  ${message.permalink}`);
     if (message.threadTs && message.threadTs !== message.ts) lines.push(`  thread: ${message.threadTs}`);
     return `${lines.join("\n")}\n`;
@@ -143,6 +167,13 @@ export function normalizeSlackText(text: string): string {
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&amp;/g, "&");
+}
+
+export function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return `${bytes} B`;
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(bytes < 10 * 1024 ? 1 : 0)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function indent(text: string): string {

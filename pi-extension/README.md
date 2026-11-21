@@ -13,6 +13,7 @@ and can only read/search Slack content they personally have access to.
 - `slack_search` — search Slack with Slack search syntax.
 - `slack_channels` — list/search accessible channels (results cached locally for 24 h).
 - `slack_permalink` — resolve a message/thread URL or channel + timestamp into a permalink.
+- `slack_download` — download a file or image attached to a Slack message by file ID or Slack file URL (attaches images inline when <= 4 MB).
 - `slack_auth_status` — check local Slack CLI authentication.
 
 ### `slack_channels` cache
@@ -79,6 +80,7 @@ slack thread <channel-id|#channel-name> <thread_ts> [--limit N] [--json]
 slack channels [query] [--limit N] [--json]
 slack permalink <url>
 slack permalink <channel-id|#channel-name> <message_ts>
+slack download <file-id|slack-file-url> [--out <path>] [--json]
 ```
 
 ### Tianren's local Slack CLI layout
@@ -158,6 +160,7 @@ search:read.mpim
 search:read.im
 search:read.users
 search:read
+files:read
 ```
 
 Tokens are stored by the CLI at:
