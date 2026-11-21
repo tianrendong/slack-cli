@@ -11,6 +11,17 @@ brew install tianrendong/tap/slack-cli
 Optional OAuth app credentials go in `~/.config/slack-cli/.env`
 (see `.env.example`).
 
+## Download attachments
+
+```bash
+slack download F0123ABC --out ./image.jpg
+```
+
+You can also pass a Slack file URL. Downloads require a Slack user token with
+`files:read`. If you use `slack auth login`, add `files:read` to your Slack app's
+user token scopes and include it alongside your existing scopes in
+`SLACK_USER_SCOPES` before signing in again.
+
 ## Setup from source
 
 ```bash
